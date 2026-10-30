@@ -1,0 +1,253 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function profileOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function validProfile(data) {
+      return data.keys().hasAll([
+            'role', 'name', 'bio', 'photoUrl', 'department', 'skills',
+            'interests', 'domains', 'certificationUrls', 'followersCount',
+            'followingCount', 'resumeUrl', 'createdAt'
+          ])
+          && data.keys().hasOnly([
+            'role', 'name', 'bio', 'photoUrl', 'department', 'skills',
+            'interests', 'domains', 'certificationUrls', 'followersCount',
+            'followingCount', 'resumeUrl', 'createdAt'
+          ])
+          && data.role in ['student', 'teacher', 'innovator']
+          && data.name is string
+          && data.bio is string
+          && data.photoUrl is string
+          && data.department is string
+          && data.skills is list
+          && data.interests is list
+          && data.domains is list
+          && data.certificationUrls is list
+          && data.followersCount is int
+          && data.followersCount >= 0
+          && data.followingCount is int
+          && data.followingCount >= 0
+          && (data.resumeUrl == null || data.resumeUrl is string)
+          && data.createdAt is timestamp;
+    }
+
+    function profileFieldsOnly() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'name', 'bio', 'photoUrl', 'department', 'skills', 'interests',
+            'domains', 'certificationUrls', 'resumeUrl'
+          ])
+          && request.resource.data.role == resource.data.role
+          && request.resource.data.followersCount == resource.data.followersCount
+          && request.resource.data.followingCount == resource.data.followingCount
+          && request.resource.data.createdAt == resource.data.createdAt;
+    }
+
+    function followingCountChange(uid) {
+      return profileOwner(uid)
+          && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['followingCount'])
+          && (request.resource.data.followingCount == resource.data.followingCount + 1
+              || request.resource.data.followingCount == resource.data.followingCount - 1);
+    }
+
+    function followerCountChange(uid) {
+      let edge = /databases/$(database)/documents/users/$(uid)/followers/$(request.auth.uid);
+      return signedIn()
+          && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['followersCount'])
+          && ((request.resource.data.followersCount == resource.data.followersCount + 1
+                  && existsAfter(edge)
+                  && !exists(edge))
+              || (request.resource.data.followersCount == resource.data.followersCount - 1
+                  && !existsAfter(edge)
+                  && exists(edge)));
+    }
+
+    function isBatchMember(batchId) {
+      let batch = get(/databases/$(database)/documents/batches/$(batchId)).data;
+      return signedIn()
+          && (batch.teacherUid == request.auth.uid
+              || batch.studentUids.hasAny([request.auth.uid]));
+    }
+
+    match /users/{uid} {
+      allow read: if signedIn();
+      allow create: if profileOwner(uid) && validProfile(request.resource.data);
+      allow delete: if profileOwner(uid);
+      allow update: if validProfile(request.resource.data)
+          && (profileOwner(uid) && profileFieldsOnly()
+              || followingCountChange(uid)
+              || followerCountChange(uid));
+
+      match /followers/{followerUid} {
+        allow read: if signedIn();
+        allow create: if signedIn()
+            && request.auth.uid == followerUid
+            && request.resource.data.uid == followerUid;
+        allow delete: if signedIn() && request.auth.uid == followerUid;
+        allow update: if false;
+      }
+
+      match /following/{targetUid} {
+        allow read: if signedIn();
+        allow create: if profileOwner(uid)
+            && request.resource.data.uid == targetUid;
+        allow delete: if profileOwner(uid);
+        allow update: if false;
+      }
+
+      match /interests/{targetUid} {
+        allow read: if profileOwner(uid);
+        allow create: if profileOwner(uid)
+            && request.resource.data.uid == targetUid;
+        allow delete: if profileOwner(uid);
+        allow update: if false;
+      }
+
+      match /fcmTokens/{tokenId} {
+        allow read, create, update, delete: if profileOwner(uid);
+      }
+
+      match /activeBatch/{claimId} {
+        allow read: if profileOwner(uid)
+            || (signedIn()
+                && get(/databases/$(database)/documents/users/$(request.auth.uid))
+                    .data.role == 'teacher');
+        allow create, update, delete: if false;
+        allow update, delete: if false;
+      }
+    }
+
+    match /notifications/{notificationId} {
+      allow read: if signedIn() && resource.data.toUid == request.auth.uid;
+      allow create: if signedIn()
+          && request.resource.data.fromUid == request.auth.uid
+          && request.resource.data.toUid is string
+          && request.resource.data.type
+              in [
+                'follow', 'interest', 'batch_invite', 'teammate_invite',
+                'task', 'batch_completed'
+              ]
+          && request.resource.data.type != 'teammate_invite'
+          && request.resource.data.read == false;
+      allow update: if signedIn()
+          && resource.data.toUid == request.auth.uid
+          && request.resource.data.toUid == resource.data.toUid
+          && request.resource.data.fromUid == resource.data.fromUid
+          && request.resource.data.type == resource.data.type
+          && request.resource.data.refId == resource.data.refId
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.read == true;
+      allow delete: if signedIn() && resource.data.toUid == request.auth.uid;
+    }
+
+    match /posts/{postId} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+          && request.resource.data.authorUid == request.auth.uid
+          && request.resource.data.type in ['update', 'certification'];
+      allow update: if signedIn()
+          && resource.data.authorUid == request.auth.uid
+          && request.resource.data.authorUid == request.auth.uid;
+      allow delete: if signedIn() && resource.data.authorUid == request.auth.uid;
+    }
+
+    match /projects/{projectId} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+          && request.resource.data.ownerUid == request.auth.uid
+          && request.resource.data.doneTaskCount == 0
+          && request.resource.data.totalTaskCount == 0;
+      allow update: if signedIn()
+          && resource.data.ownerUid == request.auth.uid
+          && request.resource.data.ownerUid == request.auth.uid
+          && request.resource.data.doneTaskCount == resource.data.doneTaskCount
+          && request.resource.data.totalTaskCount == resource.data.totalTaskCount
+          && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly([
+                'title', 'description', 'domains', 'requiredSkills',
+                'status', 'batchId'
+              ]);
+      allow delete: if signedIn()
+          && resource.data.ownerUid == request.auth.uid
+          && resource.data.batchId == null;
+    }
+
+    match /facultyStats/{teacherUid} {
+      allow read: if signedIn();
+      allow create, update, delete: if false;
+      allow delete: if false;
+    }
+
+    match /batches/{batchId} {
+      allow read: if isBatchMember(batchId);
+      allow create: if false;
+      allow update, delete: if false;
+
+      match /tasks/{taskId} {
+        allow read: if isBatchMember(batchId);
+        allow create: if isBatchMember(batchId)
+            && resource == null
+            && request.resource.data.title is string
+            && request.resource.data.description is string
+            && request.resource.data.assigneeUid is string
+            && (request.resource.data.assigneeUid == get(
+                  /databases/$(database)/documents/batches/$(batchId)
+                ).data.teacherUid
+                || get(/databases/$(database)/documents/batches/$(batchId))
+                    .data.studentUids.hasAny([request.resource.data.assigneeUid]))
+            && request.resource.data.updatedBy == request.auth.uid
+            && request.resource.data.updatedAt == request.time
+            && request.resource.data.status in ['todo', 'doing', 'done'];
+        allow update: if isBatchMember(batchId)
+            && request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly([
+                  'title', 'description', 'assigneeUid', 'status',
+                  'updatedBy', 'updatedAt'
+                ])
+            && request.resource.data.title is string
+            && request.resource.data.description is string
+            && request.resource.data.assigneeUid is string
+            && (request.resource.data.assigneeUid == get(
+                  /databases/$(database)/documents/batches/$(batchId)
+                ).data.teacherUid
+                || get(/databases/$(database)/documents/batches/$(batchId))
+                    .data.studentUids.hasAny([request.resource.data.assigneeUid]))
+            && request.resource.data.updatedBy == request.auth.uid
+            && request.resource.data.updatedAt == request.time
+            && request.resource.data.status in ['todo', 'doing', 'done'];
+        allow delete: if false;
+      }
+
+      match /messages/{messageId} {
+        allow read: if isBatchMember(batchId);
+        allow create: if isBatchMember(batchId)
+            && request.resource.data.senderUid == request.auth.uid
+            && request.resource.data.text is string
+            && request.resource.data.text.size() > 0
+            && request.resource.data.text.size() <= 4000
+            && request.resource.data.createdAt == request.time;
+        allow update, delete: if false;
+      }
+    }
+
+    match /users/{uid}/aiChatMessages/{messageId} {
+      allow read: if profileOwner(uid);
+      allow create, update, delete: if false;
+    }
+
+    match /aiChatRateLimits/{uid} {
+      allow read, write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

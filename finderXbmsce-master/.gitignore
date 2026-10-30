@@ -42,3 +42,9 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Local Firebase configuration and generated release packages
+google-services.json
+*.apk
+app-release.apk
+/functions/node_modules/
