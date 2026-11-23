@@ -45,6 +45,22 @@ class AiRepository {
     return data['sent'] as bool;
   }
 
+  Future<String> respondToCollaborationRequest({
+    required String requestId,
+    required String decision,
+  }) async {
+    final result =
+        await _functions.httpsCallable('respondToCollaborationRequest').call({
+      'requestId': requestId,
+      'decision': decision,
+    });
+    final data = result.data;
+    if (data is! Map || data['status'] != decision) {
+      throw const FormatException('Invalid collaboration response.');
+    }
+    return data['status'] as String;
+  }
+
   Stream<List<AiChatMessage>> watchChat(String uid) {
     return _firestore
         .collection('users')

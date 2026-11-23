@@ -25,12 +25,18 @@ class _ProfileEditPageState extends ConsumerState<ProfileEditPage> {
   final _bio = TextEditingController();
   final _photoUrl = TextEditingController();
   final _department = TextEditingController();
+  final _collegeName = TextEditingController();
   final _skills = TextEditingController();
   final _domains = TextEditingController();
   final _interests = TextEditingController();
+  final _preferredRole = TextEditingController();
+  final _experienceLevel = TextEditingController();
+  final _preferredWorkingHours = TextEditingController();
+  String _availability = '';
   List<String> _certificationUrls = [];
   String? _resumeUrl;
   String? _loadedUid;
+  UserRole? _loadedRole;
   bool _saving = false;
   bool _uploading = false;
 
@@ -40,9 +46,13 @@ class _ProfileEditPageState extends ConsumerState<ProfileEditPage> {
     _bio.dispose();
     _photoUrl.dispose();
     _department.dispose();
+    _collegeName.dispose();
     _skills.dispose();
     _domains.dispose();
     _interests.dispose();
+    _preferredRole.dispose();
+    _experienceLevel.dispose();
+    _preferredWorkingHours.dispose();
     super.dispose();
   }
 
@@ -55,13 +65,19 @@ class _ProfileEditPageState extends ConsumerState<ProfileEditPage> {
   void _populate(UserProfile profile) {
     if (_loadedUid == profile.uid) return;
     _loadedUid = profile.uid;
+    _loadedRole = profile.role;
     _name.text = profile.name;
     _bio.text = profile.bio;
     _photoUrl.text = profile.photoUrl;
     _department.text = profile.department;
+    _collegeName.text = profile.collegeName;
     _skills.text = profile.skills.join(', ');
     _domains.text = profile.domains.join(', ');
     _interests.text = profile.interests.join(', ');
+    _preferredRole.text = profile.preferredRole;
+    _experienceLevel.text = profile.experienceLevel;
+    _availability = profile.availability;
+    _preferredWorkingHours.text = profile.preferredWorkingHours;
     _resumeUrl = profile.resumeUrl;
     _certificationUrls = List.of(profile.certificationUrls);
   }
@@ -134,9 +150,16 @@ class _ProfileEditPageState extends ConsumerState<ProfileEditPage> {
         'bio': _bio.text.trim(),
         'photoUrl': _photoUrl.text.trim(),
         'department': _department.text.trim(),
+        'collegeName': _collegeName.text.trim(),
         'skills': _parseList(_skills.text),
         'domains': _parseList(_domains.text),
         'interests': _parseList(_interests.text),
+        if (_loadedRole == UserRole.student) ...{
+          'preferredRole': _preferredRole.text.trim(),
+          'experienceLevel': _experienceLevel.text.trim(),
+          'availability': _availability,
+          'preferredWorkingHours': _preferredWorkingHours.text.trim(),
+        },
         'resumeUrl': _resumeUrl,
         'certificationUrls': _certificationUrls,
       });
@@ -208,6 +231,8 @@ class _ProfileEditPageState extends ConsumerState<ProfileEditPage> {
               _field('About me', _bio, maxLines: 3),
               _field('Photo URL', _photoUrl),
               _field('Department', _department),
+              if (profile.role == UserRole.student)
+                _field('College name', _collegeName),
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Role'),
@@ -223,6 +248,41 @@ class _ProfileEditPageState extends ConsumerState<ProfileEditPage> {
               if (profile.role != UserRole.teacher)
                 _field('Interests (comma-separated)', _interests),
               if (profile.role == UserRole.student) ...[
+                _field('Preferred project role', _preferredRole),
+                _field(
+                  'Experience level (Beginner, Intermediate, Advanced, Expert)',
+                  _experienceLevel,
+                ),
+                DropdownButtonFormField<String>(
+                  value: const ['', 'Available', 'Limited', 'Unavailable']
+                          .contains(_availability)
+                      ? _availability
+                      : '',
+                  decoration: const InputDecoration(
+                    labelText: 'Availability',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: '', child: Text('Not specified')),
+                    DropdownMenuItem(
+                      value: 'Available',
+                      child: Text('Available'),
+                    ),
+                    DropdownMenuItem(value: 'Limited', child: Text('Limited')),
+                    DropdownMenuItem(
+                      value: 'Unavailable',
+                      child: Text('Unavailable'),
+                    ),
+                  ],
+                  onChanged: (value) => setState(() {
+                    _availability = value ?? '';
+                  }),
+                ),
+                const SizedBox(height: 8),
+                _field(
+                  'Preferred working hours (e.g. evenings, 8 hrs/week)',
+                  _preferredWorkingHours,
+                ),
                 const SizedBox(height: 8),
                 _uploadTile(
                   title: 'Resume (PDF)',

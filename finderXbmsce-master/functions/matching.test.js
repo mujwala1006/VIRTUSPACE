@@ -16,53 +16,93 @@ test("maps skills to the supported matching categories", () => {
   assert.equal(skillCategory("Poetry"), null);
 });
 
-test("rewards required skills in a complementary category", () => {
-  const user = ["Flutter", "Dart"];
-  const complement = scoreCandidate(user, ["TensorFlow", "Python"], [
-    "TensorFlow",
-  ]);
-  const duplicate = scoreCandidate(user, ["Flutter", "Dart"], ["Flutter"]);
-
-  assert.ok(complement.score > duplicate.score);
-  assert.match(complement.reason, /TensorFlow/);
-});
-
-test("rewards covering a required category with a different skill", () => {
-  const categoryMatch = scoreCandidate(
-      ["Flutter"],
-      ["Pandas"],
-      ["Data analysis"],
-  );
-  const unrelated = scoreCandidate(
-      ["Flutter"],
-      ["Figma"],
-      ["Data analysis"],
-  );
-
-  assert.ok(categoryMatch.score > unrelated.score);
-  assert.match(categoryMatch.reason, /data\/AI/);
-});
-
-test("penalizes identical skill sets", () => {
-  const identical = scoreCandidate(
+test("weights missing skills and complementary team coverage", () => {
+  const score = scoreCandidate(
       ["React", "TypeScript"],
-      ["TypeScript", "React"],
+      ["Python", "TensorFlow"],
+      ["React", "TensorFlow"],
+      {
+        teamSkills: ["React", "TypeScript"],
+        candidate: {preferredRole: "AI Developer"},
+      },
+  );
+  assert.ok(score.score >= 70);
+  assert.match(score.reason, /TensorFlow/);
+  assert.deepEqual(score.missingSkills, ["TensorFlow"]);
+});
+
+test("does not reward a candidate for skills already covered by the team", () => {
+  const duplicate = scoreCandidate(
+      ["React"],
+      ["React", "Vue"],
+      ["React"],
+      {teamSkills: ["React"]},
   );
   const complementary = scoreCandidate(
-      ["React", "TypeScript"],
-      ["Arduino", "Embedded"],
+      ["React"],
+      ["TensorFlow", "Python"],
+      ["React"],
+      {teamSkills: ["React"]},
   );
-
-  assert.ok(identical.score < complementary.score);
-  assert.match(identical.reason, /similar/);
+  assert.ok(complementary.score > duplicate.score);
 });
 
-test("returns only the top ten candidates by score", () => {
+test("considers project interests, role, experience, and availability", () => {
+  const aligned = scoreCandidate(
+      [],
+      ["Figma", "React"],
+      ["React"],
+      {
+        projectDomains: ["Education", "Accessibility"],
+        candidate: {
+          interests: ["Education"],
+          preferredRole: "Frontend Developer",
+          experienceLevel: "Advanced",
+          availability: "Available",
+        },
+      },
+  );
+  const misaligned = scoreCandidate(
+      [],
+      ["React"],
+      ["React"],
+      {
+        projectDomains: ["Education"],
+        candidate: {
+          interests: [],
+          preferredRole: "Backend Developer",
+          experienceLevel: "Beginner",
+          availability: "Unavailable",
+        },
+      },
+  );
+  assert.ok(aligned.score > misaligned.score);
+  assert.match(aligned.reason, /interests/);
+  assert.match(aligned.reason, /Frontend Developer/);
+});
+
+test("can reach 100 when all five weighted factors are fully aligned", () => {
+  const result = scoreCandidate([], ["React"], ["React"], {
+    teamSkills: [],
+    projectDomains: ["Education"],
+    requiredRoles: ["Frontend Developer"],
+    candidate: {
+      interests: ["Education"],
+      preferredRole: "Frontend Developer",
+      experienceLevel: "Expert",
+      availability: "Available",
+    },
+  });
+  assert.equal(result.score, 100);
+});
+
+test("clamps scores, deduplicates candidates, and applies the result limit", () => {
   const candidates = Array.from({length: 14}, (_, index) => ({
     uid: `candidate-${index}`,
     name: `Candidate ${index}`,
     skills: index === 13 ? ["TensorFlow"] : [`Unknown${index}`],
   }));
+  candidates.push(candidates[13]);
   const ranked = rankTeammates(
       ["Flutter"],
       candidates,
@@ -72,4 +112,6 @@ test("returns only the top ten candidates by score", () => {
 
   assert.equal(ranked.length, 10);
   assert.equal(ranked[0].uid, "candidate-13");
+  assert.ok(ranked.every((candidate) =>
+    candidate.score >= 0 && candidate.score <= 100));
 });

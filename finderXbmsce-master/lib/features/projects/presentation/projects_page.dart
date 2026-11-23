@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import '../../batches/presentation/batch_pages.dart';
+import '../../batches/domain/batch.dart';
 import '../../app_providers.dart';
+import '../../ai/presentation/team_suggestions_section.dart';
 import '../domain/project.dart';
 import '../../users/domain/user_profile.dart';
 
@@ -49,6 +51,13 @@ class ProjectExplorePage extends ConsumerWidget {
                         isThreeLine: true,
                         trailing: Chip(label: Text(project.status)),
                       ),
+                      if (project.teamUids.isNotEmpty)
+                        _ProjectCollaborators(teamUids: project.teamUids),
+                      if (user != null)
+                        _ProjectMatchingButton(
+                          uid: user.uid,
+                          project: project,
+                        ),
                       if (project.batchId != null ||
                           project.totalTaskCount > 0) ...[
                         _PublicProjectProgress(project: project),
@@ -89,6 +98,131 @@ class ProjectExplorePage extends ConsumerWidget {
             },
           );
         },
+      ),
+    );
+  }
+}
+
+class _ProjectMatchingButton extends ConsumerWidget {
+  const _ProjectMatchingButton({
+    required this.uid,
+    required this.project,
+  });
+
+  final String uid;
+  final Project project;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final profile = ref.watch(userProfileProvider(uid));
+    return profile.when(
+      loading: () => const Padding(
+        padding: EdgeInsets.symmetric(vertical: 8),
+        child: LinearProgressIndicator(),
+      ),
+      error: (error, stackTrace) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Text('Unable to load your profile: $error'),
+      ),
+      data: (userProfile) {
+        if (userProfile?.role != UserRole.student) {
+          return const SizedBox.shrink();
+        }
+        final batches = ref.watch(userBatchesProvider(uid));
+        return batches.when(
+          loading: () => const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8),
+            child: LinearProgressIndicator(),
+          ),
+          error: (error, stackTrace) => Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Text('Unable to verify your project access: $error'),
+          ),
+          data: (items) {
+            final belongsToBatch = items.any(
+              (batch) =>
+                  batch.status == BatchStatus.active &&
+                  batch.projectId == project.id,
+            );
+            final canMatch = project.teamUids.contains(uid) ||
+                belongsToBatch ||
+                (project.status == 'open' && project.batchId == null);
+            if (!canMatch) return const SizedBox.shrink();
+            return Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => Scaffold(
+                      appBar: AppBar(title: const Text('Smart Team Matching')),
+                      body: ListView(
+                        children: [
+                          TeamSuggestionsSection(
+                            uid: uid,
+                            role: UserRole.student,
+                            initialProjectId: project.id,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                icon: const Icon(Icons.groups_outlined),
+                label: const Text('Find teammates'),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+class _ProjectCollaborators extends ConsumerWidget {
+  const _ProjectCollaborators({required this.teamUids});
+
+  final List<String> teamUids;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        child: Wrap(
+          spacing: 6,
+          runSpacing: 0,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            const Chip(
+              avatar: Icon(Icons.groups_outlined, size: 18),
+              label: Text('Accepted collaborators'),
+            ),
+            for (final uid in teamUids) _CollaboratorChip(uid: uid),
+          ],
+        ),
+      );
+}
+
+class _CollaboratorChip extends ConsumerWidget {
+  const _CollaboratorChip({required this.uid});
+
+  final String uid;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final profile = ref.watch(userProfileProvider(uid));
+    return profile.when(
+      loading: () => const Chip(label: Text('Loading teammate...')),
+      error: (error, stackTrace) =>
+          Chip(label: Text('Unable to load teammate: $error')),
+      data: (value) => Chip(
+        avatar: CircleAvatar(
+          backgroundImage: value == null || value.photoUrl.isEmpty
+              ? null
+              : NetworkImage(value.photoUrl),
+          child: value == null || value.photoUrl.isEmpty
+              ? const Icon(Icons.person, size: 16)
+              : null,
+        ),
+        label: Text(value?.name ?? 'Former member'),
       ),
     );
   }

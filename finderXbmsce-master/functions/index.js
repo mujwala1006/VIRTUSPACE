@@ -7,11 +7,20 @@ const {onDocumentWritten} = require("firebase-functions/v2/firestore");
 const {onSchedule} = require("firebase-functions/v2/scheduler");
 const {onCall, HttpsError} = require("firebase-functions/v2/https");
 const {defineSecret} = require("firebase-functions/params");
+const {createHash} = require("node:crypto");
 const logger = require("firebase-functions/logger");
-const {rankTeammates} = require("./matching");
+const {rankTeammates, skillCategory} = require("./matching");
 
 initializeApp();
 const openAiApiKey = defineSecret("OPENAI_API_KEY");
+
+const collaborationRequestId = (projectId, toUid) =>
+  createHash("sha256")
+      .update(`${projectId}\u0000${toUid}`)
+      .digest("hex");
+
+const stringList = (value) => Array.isArray(value) ?
+  value.filter((item) => typeof item === "string") : [];
 
 exports.suggestTeammates = onCall({timeoutSeconds: 60}, async (request) => {
   const uid = request.auth?.uid;
@@ -20,7 +29,10 @@ exports.suggestTeammates = onCall({timeoutSeconds: 60}, async (request) => {
   }
   if (!request.data || request.data.uid !== uid ||
       (request.data.projectId != null &&
-        typeof request.data.projectId !== "string")) {
+        (typeof request.data.projectId !== "string" ||
+          request.data.projectId.trim().length === 0 ||
+          request.data.projectId.length > 128 ||
+          request.data.projectId.includes("/")))) {
     throw new HttpsError(
         "invalid-argument",
         "A valid user and project are required.",
@@ -68,6 +80,9 @@ exports.suggestTeammates = onCall({timeoutSeconds: 60}, async (request) => {
 
   const project = projectSnapshot.data();
   let canAccess = project.ownerUid === uid;
+  if (!canAccess && stringList(project.teamUids).includes(uid)) {
+    canAccess = true;
+  }
   if (!canAccess && project.status === "open" && project.batchId == null) {
     canAccess = true;
   }
@@ -85,6 +100,17 @@ exports.suggestTeammates = onCall({timeoutSeconds: 60}, async (request) => {
     );
   }
 
+  const projectTeamUids = new Set([
+    project.ownerUid,
+    ...stringList(project.teamUids),
+  ]);
+  if (typeof project.batchId === "string") {
+    const batchSnapshot = await db.collection("batches").doc(project.batchId).get();
+    if (batchSnapshot.exists) {
+      stringList(batchSnapshot.get("studentUids")).forEach((memberUid) =>
+        projectTeamUids.add(memberUid));
+    }
+  }
   const users = [];
   let page = await db.collection("users")
       .orderBy("__name__")
@@ -99,31 +125,79 @@ exports.suggestTeammates = onCall({timeoutSeconds: 60}, async (request) => {
         .limit(500)
         .get();
   }
+  const teamSkills = [];
+  const usersByUid = new Map(users.map((document) => [document.id, document]));
+  for (const teamUid of projectTeamUids) {
+    const teamMember = usersByUid.get(teamUid);
+    if (teamMember) teamSkills.push(...stringList(teamMember.get("skills")));
+  }
+  if (projectTeamUids.has(uid)) {
+    teamSkills.push(...stringList(userSnapshot.get("skills")));
+  }
+
+  const missingCategories = new Set(
+      stringList(project.requiredSkills)
+          .filter((requiredSkill) => !teamSkills.some((teamSkill) =>
+            teamSkill.trim().toLowerCase() ===
+              requiredSkill.trim().toLowerCase()))
+          .map((skill) => skillCategory(skill))
+          .filter(Boolean),
+  );
+  const categoryRoles = {
+    frontend: "Frontend Developer",
+    backend: "Backend Developer",
+    mobile: "Mobile Developer",
+    "data/AI": "AI Developer",
+    design: "UI/UX Designer",
+    hardware: "Hardware Developer",
+  };
+  const requiredRoles = [...missingCategories]
+      .map((category) => categoryRoles[category]);
+
   const candidates = users
-      .filter((document) => document.id !== uid)
+      .filter((document) => document.id !== uid &&
+        document.get("role") === "student" &&
+        !projectTeamUids.has(document.id))
       .map((document) => {
         const profile = document.data();
         return {
           uid: document.id,
           name: typeof profile.name === "string" ? profile.name : "FinderX user",
-          role: typeof profile.role === "string" ? profile.role : "student",
+          role: typeof profile.preferredRole === "string" ?
+            profile.preferredRole : "Student",
+          preferredRole: typeof profile.preferredRole === "string" ?
+            profile.preferredRole : "",
           department: typeof profile.department === "string" ?
             profile.department : "",
+          collegeName: typeof profile.collegeName === "string" &&
+            profile.collegeName.trim() ? profile.collegeName :
+            (typeof profile.department === "string" ? profile.department : ""),
           photoUrl: typeof profile.photoUrl === "string" ?
             profile.photoUrl : "",
-          skills: Array.isArray(profile.skills) ?
-            profile.skills.filter((skill) => typeof skill === "string") : [],
+          skills: stringList(profile.skills),
+          interests: stringList(profile.interests),
+          experienceLevel: typeof profile.experienceLevel === "string" ?
+            profile.experienceLevel : "",
+          availability: typeof profile.availability === "string" ?
+            profile.availability : "",
+          preferredWorkingHours:
+            typeof profile.preferredWorkingHours === "string" ?
+              profile.preferredWorkingHours : "",
         };
       });
 
   return {
     suggestions: rankTeammates(
-        Array.isArray(userSnapshot.get("skills")) ?
-          userSnapshot.get("skills").filter((skill) => typeof skill === "string") : [],
+        stringList(userSnapshot.get("skills")),
         candidates,
-        Array.isArray(project.requiredSkills) ?
-          project.requiredSkills.filter((skill) => typeof skill === "string") : [],
-        10,
+        stringList(project.requiredSkills),
+        100,
+        {
+          teamSkills,
+          projectDomains: stringList(project.domains),
+          userInterests: stringList(userSnapshot.get("interests")),
+          requiredRoles,
+        },
     ),
   };
 });
@@ -134,59 +208,204 @@ exports.inviteTeammate = onCall(async (request) => {
   if (!fromUid) {
     throw new HttpsError("unauthenticated", "Sign in to send an invitation.");
   }
-  if (typeof toUid !== "string" || typeof projectId !== "string" ||
+  if (typeof toUid !== "string" || toUid.trim().length === 0 ||
+      toUid.length > 128 || toUid.includes("/") ||
+      typeof projectId !== "string" || projectId.trim().length === 0 ||
+      projectId.length > 128 || projectId.includes("/") ||
       toUid === fromUid) {
     throw new HttpsError("invalid-argument", "Choose a valid teammate.");
   }
 
   const db = getFirestore();
-  const [projectSnapshot, targetSnapshot] = await Promise.all([
-    db.collection("projects").doc(projectId).get(),
-    db.collection("users").doc(toUid).get(),
-  ]);
-  if (!projectSnapshot.exists || !targetSnapshot.exists) {
-    throw new HttpsError("not-found", "The project or teammate was not found.");
-  }
-  const project = projectSnapshot.data();
-  let canInvite = project.ownerUid === fromUid;
-  if (!canInvite && project.status === "open" && project.batchId == null) {
-    canInvite = true;
-  }
-  let batchId = null;
-  if (typeof project.batchId === "string") {
-    const batch = await db.collection("batches").doc(project.batchId).get();
-    if (batch.exists &&
-        (batch.get("teacherUid") === fromUid ||
-          (Array.isArray(batch.get("studentUids")) &&
-            batch.get("studentUids").includes(fromUid)))) {
-      canInvite = true;
-      batchId = project.batchId;
+  const requestId = collaborationRequestId(projectId, toUid);
+  const requestRef = db.collection("collaborationRequests").doc(requestId);
+  const projectRef = db.collection("projects").doc(projectId);
+  const senderRef = db.collection("users").doc(fromUid);
+  const targetRef = db.collection("users").doc(toUid);
+  const result = await db.runTransaction(async (transaction) => {
+    const [projectSnapshot, senderSnapshot, targetSnapshot, requestSnapshot] =
+      await Promise.all([
+        transaction.get(projectRef),
+        transaction.get(senderRef),
+        transaction.get(targetRef),
+        transaction.get(requestRef),
+      ]);
+    if (!projectSnapshot.exists || !senderSnapshot.exists ||
+        !targetSnapshot.exists) {
+      throw new HttpsError("not-found", "The project or teammate was not found.");
     }
-  }
-  if (!canInvite) {
-    throw new HttpsError(
-        "permission-denied",
-        "Only the project owner or a batch member can invite teammates.",
-    );
-  }
+    if (targetSnapshot.get("role") !== "student") {
+      throw new HttpsError(
+          "invalid-argument",
+          "Collaboration requests can only be sent to students.",
+      );
+    }
+    const project = projectSnapshot.data();
+    const memberUids = new Set([
+      project.ownerUid,
+      ...stringList(project.teamUids),
+    ]);
+    let batchSnapshot = null;
+    if (typeof project.batchId === "string") {
+      batchSnapshot = await transaction.get(
+          db.collection("batches").doc(project.batchId));
+      if (batchSnapshot.exists) {
+        memberUids.add(batchSnapshot.get("teacherUid"));
+        stringList(batchSnapshot.get("studentUids"))
+            .forEach((memberUid) => memberUids.add(memberUid));
+      }
+    }
+    const canInvite = project.ownerUid === fromUid ||
+      memberUids.has(fromUid) ||
+      (project.status === "open" && project.batchId == null &&
+        senderSnapshot.get("role") === "student");
+    if (!canInvite) {
+      throw new HttpsError(
+          "permission-denied",
+          "Only project members can invite teammates.",
+      );
+    }
+    if (project.status !== "open" && project.status !== "active") {
+      throw new HttpsError(
+          "failed-precondition",
+          "This project is no longer accepting teammates.",
+      );
+    }
+    if (memberUids.has(toUid)) {
+      throw new HttpsError(
+          "already-exists",
+          "This student is already a member of the project.",
+      );
+    }
+    if (requestSnapshot.exists) return {sent: false};
 
-  const notificationId = `teammate_invite_${projectId}_${toUid}`;
-  const notificationRef = db.collection("notifications").doc(notificationId);
-  const sent = await db.runTransaction(async (transaction) => {
-    const existing = await transaction.get(notificationRef);
-    if (existing.exists) return false;
+    const notificationId = `collaboration_request_${requestId}`;
+    const notificationRef = db.collection("notifications").doc(notificationId);
+    const projectTitle = typeof project.title === "string" ?
+      project.title : "your project";
+    transaction.create(requestRef, {
+      requestId,
+      projectId,
+      projectTitle,
+      fromUid,
+      toUid,
+      status: "pending",
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+      notificationId,
+    });
     transaction.create(notificationRef, {
       toUid,
       fromUid,
       type: "teammate_invite",
-      refId: projectId,
-      ...(batchId == null ? {} : {batchId}),
+      refId: requestId,
+      requestId,
+      projectId,
+      projectTitle,
+      status: "pending",
       createdAt: FieldValue.serverTimestamp(),
       read: false,
     });
-    return true;
+    return {sent: true};
   });
-  return {sent};
+  return result;
+});
+
+exports.respondToCollaborationRequest = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  const {requestId, decision} = request.data || {};
+  if (!uid) {
+    throw new HttpsError("unauthenticated", "Sign in to respond to requests.");
+  }
+  if (typeof requestId !== "string" || !/^[a-f0-9]{64}$/.test(requestId) ||
+      (decision !== "accepted" && decision !== "rejected")) {
+    throw new HttpsError(
+        "invalid-argument",
+        "Choose a valid collaboration request and response.",
+    );
+  }
+
+  const db = getFirestore();
+  const requestRef = db.collection("collaborationRequests").doc(requestId);
+  const response = await db.runTransaction(async (transaction) => {
+    const requestSnapshot = await transaction.get(requestRef);
+    if (!requestSnapshot.exists) {
+      throw new HttpsError("not-found", "The collaboration request was not found.");
+    }
+    const collaboration = requestSnapshot.data();
+    if (collaboration.toUid !== uid) {
+      throw new HttpsError(
+          "permission-denied",
+          "Only the invited student can respond to this request.",
+      );
+    }
+    if (collaboration.status !== "pending") {
+      if (collaboration.status === decision) return {status: decision};
+      throw new HttpsError(
+          "failed-precondition",
+          "This collaboration request has already been answered.",
+      );
+    }
+
+    const projectRef = db.collection("projects").doc(collaboration.projectId);
+    const notificationRef =
+      db.collection("notifications").doc(collaboration.notificationId);
+    const [projectSnapshot, notificationSnapshot] = await Promise.all([
+      transaction.get(projectRef),
+      transaction.get(notificationRef),
+    ]);
+    if (!projectSnapshot.exists) {
+      throw new HttpsError("not-found", "The project was not found.");
+    }
+    const project = projectSnapshot.data();
+    if (decision === "accepted" &&
+        project.status !== "open" && project.status !== "active") {
+      throw new HttpsError(
+          "failed-precondition",
+          "This project is no longer accepting teammates.",
+      );
+    }
+
+    transaction.update(requestRef, {
+      status: decision,
+      updatedAt: FieldValue.serverTimestamp(),
+      respondedAt: FieldValue.serverTimestamp(),
+    });
+    if (notificationSnapshot.exists) {
+      transaction.update(notificationRef, {
+        status: decision,
+        read: true,
+      });
+    }
+    if (decision === "accepted") {
+      const acceptedMembers = [uid];
+      if (collaboration.fromUid !== project.ownerUid) {
+        acceptedMembers.push(collaboration.fromUid);
+      }
+      transaction.update(projectRef, {
+        teamUids: FieldValue.arrayUnion(...acceptedMembers),
+      });
+    }
+    const responseNotificationId =
+      `collaboration_response_${requestId}_${decision}`;
+    transaction.create(
+        db.collection("notifications").doc(responseNotificationId),
+        {
+          toUid: collaboration.fromUid,
+          fromUid: uid,
+          type: "collaboration_response",
+          refId: requestId,
+          requestId,
+          projectId: collaboration.projectId,
+          projectTitle: collaboration.projectTitle,
+          status: decision,
+          createdAt: FieldValue.serverTimestamp(),
+          read: false,
+        },
+    );
+    return {status: decision};
+  });
+  return response;
 });
 
 exports.chatbot = onCall(
@@ -440,7 +659,8 @@ exports.createBatch = onCall(async (request) => {
   return {batchId};
 });
 
-const notificationCopy = (type, senderName) => {
+const notificationCopy = (notification, senderName) => {
+  const type = notification.type;
   switch (type) {
     case "follow":
       return {title: "New follower", body: `${senderName} followed you.`};
@@ -449,7 +669,15 @@ const notificationCopy = (type, senderName) => {
     case "batch_invite":
       return {title: "Batch invitation", body: `${senderName} sent you a batch invitation.`};
     case "teammate_invite":
-      return {title: "Project invitation", body: `${senderName} invited you to collaborate.`};
+      return {
+        title: "Collaboration request",
+        body: `${senderName} invited you to collaborate on ${notification.projectTitle || "a project"}.`,
+      };
+    case "collaboration_response":
+      return {
+        title: "Collaboration request update",
+        body: `${senderName} ${notification.status === "accepted" ? "accepted" : "declined"} your request for ${notification.projectTitle || "a project"}.`,
+      };
     case "task":
       return {title: "Project update", body: `${senderName} updated a task.`};
     case "batch_completed":
@@ -502,7 +730,7 @@ exports.sendNotificationPush = onDocumentCreated(
 
       const sender = await db.collection("users").doc(notification.fromUid).get();
       const senderName = sender.exists ? sender.get("name") || "Someone" : "Someone";
-      const copy = notificationCopy(notification.type, senderName);
+      const copy = notificationCopy(notification, senderName);
       const notificationType = typeof notification.type === "string" ?
         notification.type : "";
       const invalidTokenDeletes = [];

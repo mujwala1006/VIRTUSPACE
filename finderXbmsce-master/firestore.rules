@@ -18,7 +18,9 @@ service cloud.firestore {
           && data.keys().hasOnly([
             'role', 'name', 'bio', 'photoUrl', 'department', 'skills',
             'interests', 'domains', 'certificationUrls', 'followersCount',
-            'followingCount', 'resumeUrl', 'createdAt'
+            'followingCount', 'resumeUrl', 'createdAt', 'collegeName',
+            'preferredRole', 'experienceLevel', 'availability',
+            'preferredWorkingHours'
           ])
           && data.role in ['student', 'teacher', 'innovator']
           && data.name is string
@@ -34,13 +36,20 @@ service cloud.firestore {
           && data.followingCount is int
           && data.followingCount >= 0
           && (data.resumeUrl == null || data.resumeUrl is string)
+          && (!data.keys().hasAny(['collegeName']) || data.collegeName is string)
+          && (!data.keys().hasAny(['preferredRole']) || data.preferredRole is string)
+          && (!data.keys().hasAny(['experienceLevel']) || data.experienceLevel is string)
+          && (!data.keys().hasAny(['availability']) || data.availability is string)
+          && (!data.keys().hasAny(['preferredWorkingHours']) || data.preferredWorkingHours is string)
           && data.createdAt is timestamp;
     }
 
     function profileFieldsOnly() {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
             'name', 'bio', 'photoUrl', 'department', 'skills', 'interests',
-            'domains', 'certificationUrls', 'resumeUrl'
+            'domains', 'certificationUrls', 'resumeUrl', 'collegeName',
+            'preferredRole', 'experienceLevel', 'availability',
+            'preferredWorkingHours'
           ])
           && request.resource.data.role == resource.data.role
           && request.resource.data.followersCount == resource.data.followersCount
@@ -120,7 +129,6 @@ service cloud.firestore {
                 && get(/databases/$(database)/documents/users/$(request.auth.uid))
                     .data.role == 'teacher');
         allow create, update, delete: if false;
-        allow update, delete: if false;
       }
     }
 
@@ -131,10 +139,8 @@ service cloud.firestore {
           && request.resource.data.toUid is string
           && request.resource.data.type
               in [
-                'follow', 'interest', 'batch_invite', 'teammate_invite',
-                'task', 'batch_completed'
+                'follow', 'interest', 'batch_invite', 'task', 'batch_completed'
               ]
-          && request.resource.data.type != 'teammate_invite'
           && request.resource.data.read == false;
       allow update: if signedIn()
           && resource.data.toUid == request.auth.uid
@@ -143,6 +149,14 @@ service cloud.firestore {
           && request.resource.data.type == resource.data.type
           && request.resource.data.refId == resource.data.refId
           && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.get('requestId', '') ==
+              resource.data.get('requestId', '')
+          && request.resource.data.get('projectId', '') ==
+              resource.data.get('projectId', '')
+          && request.resource.data.get('projectTitle', '') ==
+              resource.data.get('projectTitle', '')
+          && request.resource.data.get('status', '') ==
+              resource.data.get('status', '')
           && request.resource.data.read == true;
       allow delete: if signedIn() && resource.data.toUid == request.auth.uid;
     }
@@ -182,7 +196,6 @@ service cloud.firestore {
     match /facultyStats/{teacherUid} {
       allow read: if signedIn();
       allow create, update, delete: if false;
-      allow delete: if false;
     }
 
     match /batches/{batchId} {

@@ -71,6 +71,23 @@ class ProfilePage extends ConsumerWidget {
               const SizedBox(height: 16),
               _ProfileDetail(label: 'About', value: profile.bio),
               _ProfileDetail(label: 'Department', value: profile.department),
+              _ProfileDetail(label: 'College', value: profile.collegeName),
+              _ProfileDetail(
+                label: 'Preferred project role',
+                value: profile.preferredRole,
+              ),
+              _ProfileDetail(
+                label: 'Experience',
+                value: profile.experienceLevel,
+              ),
+              _ProfileDetail(
+                label: 'Availability',
+                value: profile.availability,
+              ),
+              _ProfileDetail(
+                label: 'Preferred working hours',
+                value: profile.preferredWorkingHours,
+              ),
               _ProfileDetail(
                 label: 'Skills',
                 value: profile.skills.join(', '),

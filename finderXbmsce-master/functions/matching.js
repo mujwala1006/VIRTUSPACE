@@ -5,7 +5,7 @@ const SKILL_CATEGORIES = {
   ],
   backend: [
     "backend", "back-end", "node", "express", "java", "spring", "django",
-    "flask", "api", "server", "sql", "database",
+    "flask", "api", "server", "sql", "database", "mongodb",
   ],
   mobile: [
     "mobile", "flutter", "dart", "android", "ios", "react native", "kotlin",
@@ -14,6 +14,7 @@ const SKILL_CATEGORIES = {
   "data/AI": [
     "data", "machine learning", "deep learning", "artificial intelligence",
     "ai", "ml", "tensorflow", "pytorch", "pandas", "analytics", "nlp",
+    "python",
   ],
   design: [
     "design", "ui/ux", "ux", "ui", "figma", "wireframe", "prototyping",
@@ -26,6 +27,9 @@ const SKILL_CATEGORIES = {
 };
 
 const normalize = (value) => value.trim().toLowerCase().replace(/\s+/g, " ");
+const asSet = (values = []) =>
+  new Set(values.filter((value) => typeof value === "string")
+      .map(normalize).filter(Boolean));
 
 function skillCategory(skill) {
   const normalized = normalize(skill);
@@ -41,63 +45,173 @@ function skillCategory(skill) {
   return null;
 }
 
-function scoreCandidate(userSkills, candidateSkills, requiredSkills = []) {
-  const userSet = new Set(userSkills.map(normalize));
-  const candidateSet = new Set(candidateSkills.map(normalize));
-  const userCategories = new Set(userSkills.map(skillCategory).filter(Boolean));
-  const candidateCategories =
-    new Set(candidateSkills.map(skillCategory).filter(Boolean));
-  const requiredCategories =
-    new Set(requiredSkills.map(skillCategory).filter(Boolean));
+const categoriesFor = (values) =>
+  new Set(values.map(skillCategory).filter(Boolean));
 
-  const matchingRequired = requiredSkills.filter(
-      (skill) => candidateSet.has(normalize(skill)),
-  );
-  const coveredCategories = [...requiredCategories].filter(
-      (category) => candidateCategories.has(category),
-  );
-  const complementaryRequiredCategories = coveredCategories.filter(
-      (category) => !userCategories.has(category),
-  );
-  const complementaryCategories = [...candidateCategories].filter(
-      (category) => !userCategories.has(category),
-  );
-  const overlap = [...candidateSet].filter((skill) => userSet.has(skill)).length;
-  const unionSize = new Set([...userSet, ...candidateSet]).size;
-  const similarity = unionSize === 0 ? 0 : overlap / unionSize;
-  const identicalSkills = userSet.size === candidateSet.size &&
-      [...userSet].every((skill) => candidateSet.has(skill));
+const overlapRatio = (matches, total) =>
+  total === 0 ? 0 : matches / total;
 
-  const score = Math.max(0, Math.min(100,
-    matchingRequired.length * 22 +
-    coveredCategories.length * 10 +
-    complementaryRequiredCategories.length * 16 +
-    Math.min(complementaryCategories.length, 3) * 5 -
-    Math.round(similarity * 28) -
-    (identicalSkills ? 24 : 0),
-  ));
+const experienceScore = (level) => {
+  switch (normalize(level || "")) {
+    case "beginner":
+    case "beginner (0-1 years)":
+      return 0.45;
+    case "intermediate":
+    case "intermediate (1-3 years)":
+      return 0.7;
+    case "advanced":
+    case "advanced (3+ years)":
+      return 0.9;
+    case "expert":
+      return 1;
+    default:
+      return 0.5;
+  }
+};
 
-  let reason;
-  if (matchingRequired.length > 0) {
-    reason = `Covers project needs: ${matchingRequired.slice(0, 3).join(", ")}.`;
-  } else if (complementaryRequiredCategories.length > 0) {
-    reason = `Adds complementary ${complementaryRequiredCategories.join(", ")} skills for this project.`;
-  } else if (complementaryCategories.length > 0) {
-    reason = `Brings complementary ${complementaryCategories.slice(0, 3).join(", ")} skills.`;
-  } else if (identicalSkills) {
-    reason = "Your skill sets are very similar; consider a different specialty.";
-  } else {
-    reason = "Could bring a useful perspective to your project team.";
+const availabilityScore = (availability) => {
+  switch (normalize(availability || "")) {
+    case "available":
+    case "actively looking":
+      return 1;
+    case "limited":
+    case "limited availability":
+      return 0.65;
+    case "unavailable":
+      return 0;
+    default:
+      return 0.5;
+  }
+};
+
+/**
+ * Deterministic recommendation score. Weights: skill 40, team balance 25,
+ * interests 15, role 10, experience/availability 10.
+ */
+function scoreCandidate(userSkills, candidateSkills, requiredSkills = [], options = {}) {
+  const candidate = options.candidate || {};
+  const required = requiredSkills.filter((skill) => typeof skill === "string");
+  const teamSkills = options.teamSkills || userSkills;
+  const candidateSet = asSet(candidateSkills);
+  const teamSet = asSet(teamSkills);
+  const candidateCategories = categoriesFor(candidateSkills);
+  const teamCategories = categoriesFor(teamSkills);
+  const requiredCategories = categoriesFor(required);
+
+  const missingSkills = required.filter((skill) => {
+    return !teamSet.has(normalize(skill));
+  });
+  const skillTargets = missingSkills;
+  const skillPoints = skillTargets.reduce((total, skill) => {
+    if (candidateSet.has(normalize(skill))) return total + 1;
+    const category = skillCategory(skill);
+    return total + (category && candidateCategories.has(category) ? 0.55 : 0);
+  }, 0);
+  const skillFit = overlapRatio(skillPoints, skillTargets.length);
+
+  const missingCategories = [...requiredCategories]
+      .filter((category) => !teamCategories.has(category));
+  const balanceFit = missingCategories.length > 0 ?
+    overlapRatio(
+        missingCategories.filter((category) =>
+          candidateCategories.has(category)).length,
+        missingCategories.length,
+    ) :
+    Math.min(
+        [...candidateCategories].filter((category) =>
+          !teamCategories.has(category)).length / 3,
+        1,
+    );
+
+  const interests = asSet(candidate.interests || []);
+  const projectInterests = asSet(options.projectDomains || []);
+  const userInterests = asSet(options.userInterests || []);
+  const interestTargets = new Set([...projectInterests, ...userInterests]);
+  const interestFit = overlapRatio(
+      [...interests].filter((interest) => interestTargets.has(interest)).length,
+      interestTargets.size,
+  );
+
+  const expectedRoles = options.requiredRoles || [];
+  const roleFit = expectedRoles.length > 0 ?
+    (expectedRoles.some((role) =>
+      normalize(candidate.preferredRole || "") === normalize(role)) ? 1 :
+      expectedRoles.some((role) => candidateCategories.has(skillCategory(role))) ?
+        0.6 : 0) :
+    (candidate.preferredRole ? 0.6 : 0.3);
+
+  const readinessFit = (
+    experienceScore(candidate.experienceLevel) +
+    availabilityScore(candidate.availability)
+  ) / 2;
+
+  const score = Math.max(0, Math.min(100, Math.round(
+    skillFit * 40 +
+    balanceFit * 25 +
+    interestFit * 15 +
+    roleFit * 10 +
+    readinessFit * 10,
+  )));
+
+  const reasons = [];
+  const covered = skillTargets.filter((skill) =>
+    candidateSet.has(normalize(skill)));
+  if (covered.length > 0) {
+    reasons.push(`Covers missing project skills: ${covered.slice(0, 3).join(", ")}.`);
+  }
+  const complementary = missingCategories.filter((category) =>
+    candidateCategories.has(category));
+  if (complementary.length > 0) {
+    reasons.push(`Adds a needed ${complementary.slice(0, 2).join(", ")} specialty.`);
+  } else if (balanceFit > 0) {
+    const extra = [...candidateCategories]
+        .filter((category) => !teamCategories.has(category));
+    if (extra.length > 0) {
+      reasons.push(`Balances the team with ${extra.slice(0, 2).join(", ")} skills.`);
+    }
+  }
+  if (interestFit > 0) reasons.push("Shares interests with this project.");
+  if (roleFit >= 0.6 && candidate.preferredRole) {
+    reasons.push(`Prefers the ${candidate.preferredRole} role.`);
+  }
+  if (candidate.availability) {
+    reasons.push(
+        `Availability: ${candidate.availability.toLowerCase()}${
+          candidate.preferredWorkingHours ?
+            ` (${candidate.preferredWorkingHours})` : ""
+        }.`,
+    );
+  }
+  if (candidate.experienceLevel) {
+    reasons.push(`Experience: ${candidate.experienceLevel.toLowerCase()}.`);
+  }
+  if (reasons.length === 0) {
+    reasons.push("Could bring a useful perspective to this project team.");
   }
 
-  return {score, reason};
+  return {
+    score,
+    reason: reasons.join(" "),
+    missingSkills: covered,
+  };
 }
 
-function rankTeammates(userSkills, candidates, requiredSkills = [], limit = 10) {
+function rankTeammates(userSkills, candidates, requiredSkills = [], limit = 10, options = {}) {
+  const seen = new Set();
   return candidates
+      .filter((candidate) => {
+        if (typeof candidate.uid !== "string" || seen.has(candidate.uid)) {
+          return false;
+        }
+        seen.add(candidate.uid);
+        return true;
+      })
       .map((candidate) => ({
         ...candidate,
-        ...scoreCandidate(userSkills, candidate.skills, requiredSkills),
+        ...scoreCandidate(userSkills, candidate.skills, requiredSkills, {
+          ...options,
+          candidate,
+        }),
       }))
       .sort((left, right) =>
         right.score - left.score || left.name.localeCompare(right.name))

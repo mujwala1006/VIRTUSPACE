@@ -49,6 +49,8 @@ class NotificationsPage extends ConsumerWidget {
                     item: item,
                     onMarkRead: () => _markRead(context, ref, item),
                     onOpen: () => _openSender(context, ref, item),
+                    onRespond: (decision) =>
+                        _respond(context, ref, item, decision),
                   ),
               ],
             ],
@@ -81,11 +83,46 @@ class NotificationsPage extends ConsumerWidget {
   ) async {
     final navigator = Navigator.of(context);
     await _markRead(context, ref, item);
+    if (!navigator.mounted) return;
     navigator.push(
       MaterialPageRoute<void>(
         builder: (_) => ProfilePage(uid: item.fromUid),
       ),
     );
+  }
+
+  Future<void> _respond(
+    BuildContext context,
+    WidgetRef ref,
+    AppNotification item,
+    String decision,
+  ) async {
+    final requestId = item.requestId;
+    if (requestId == null) return;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await ref.read(aiRepositoryProvider).respondToCollaborationRequest(
+            requestId: requestId,
+            decision: decision,
+          );
+      if (messenger.mounted) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(
+              decision == 'accepted'
+                  ? 'Collaboration request accepted.'
+                  : 'Collaboration request declined.',
+            ),
+          ),
+        );
+      }
+    } catch (error) {
+      if (messenger.mounted) {
+        messenger.showSnackBar(
+          SnackBar(content: Text('Unable to respond to request: $error')),
+        );
+      }
+    }
   }
 
   String _dateGroup(DateTime dateTime) {
@@ -103,11 +140,13 @@ class _NotificationRow extends ConsumerWidget {
     required this.item,
     required this.onMarkRead,
     required this.onOpen,
+    required this.onRespond,
   });
 
   final AppNotification item;
   final VoidCallback onMarkRead;
   final VoidCallback onOpen;
+  final ValueChanged<String> onRespond;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -131,6 +170,7 @@ class _NotificationRow extends ConsumerWidget {
         profile: profile,
         onMarkRead: onMarkRead,
         onOpen: onOpen,
+        onRespond: onRespond,
       ),
     );
   }
@@ -142,12 +182,14 @@ class _NotificationTile extends StatelessWidget {
     required this.profile,
     required this.onMarkRead,
     required this.onOpen,
+    required this.onRespond,
   });
 
   final AppNotification item;
   final UserProfile? profile;
   final VoidCallback onMarkRead;
   final VoidCallback onOpen;
+  final ValueChanged<String> onRespond;
 
   @override
   Widget build(BuildContext context) {
@@ -162,21 +204,65 @@ class _NotificationTile extends StatelessWidget {
             : null,
       ),
       title: Text(_textForNotification(item.type, senderName)),
-      subtitle: Text(
-        TimeOfDay.fromDateTime(item.createdAt.toLocal()).format(context),
-      ),
-      trailing: item.read
-          ? null
-          : IconButton(
-              tooltip: 'Mark as read',
-              onPressed: onMarkRead,
-              icon: const Icon(Icons.mark_email_read_outlined),
-            ),
+      subtitle: Text(_subtitle(context)),
+      trailing: _trailing(),
       tileColor: item.read
           ? null
           : Theme.of(context).colorScheme.secondaryContainer.withOpacity(0.35),
       onTap: onOpen,
     );
+  }
+
+  Widget? _trailing() {
+    if (item.type == NotificationType.teammateInvite &&
+        item.status == 'pending' &&
+        item.requestId != null) {
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            tooltip: 'Accept collaboration request',
+            onPressed: () => onRespond('accepted'),
+            icon: const Icon(Icons.check_circle_outline),
+          ),
+          IconButton(
+            tooltip: 'Reject collaboration request',
+            onPressed: () => onRespond('rejected'),
+            icon: const Icon(Icons.cancel_outlined),
+          ),
+        ],
+      );
+    }
+    return item.read
+        ? null
+        : IconButton(
+            tooltip: 'Mark as read',
+            onPressed: onMarkRead,
+            icon: const Icon(Icons.mark_email_read_outlined),
+          );
+  }
+
+  String _subtitle(BuildContext context) {
+    final time =
+        TimeOfDay.fromDateTime(item.createdAt.toLocal()).format(context);
+    final project = item.projectTitle;
+    switch (item.type) {
+      case NotificationType.teammateInvite:
+        final status = item.status == 'accepted'
+            ? 'Accepted'
+            : item.status == 'rejected'
+                ? 'Rejected'
+                : 'Pending';
+        return '$status • ${project ?? 'Project'} • $time';
+      case NotificationType.collaborationResponse:
+        return '${project ?? 'Project'} • $time';
+      case NotificationType.follow:
+      case NotificationType.interest:
+      case NotificationType.batchInvite:
+      case NotificationType.task:
+      case NotificationType.batchCompleted:
+        return time;
+    }
   }
 
   String _textForNotification(NotificationType type, String senderName) {
@@ -188,7 +274,12 @@ class _NotificationTile extends StatelessWidget {
       case NotificationType.batchInvite:
         return '$senderName sent a batch invitation.';
       case NotificationType.teammateInvite:
-        return '$senderName invited you to collaborate on a project.';
+        return '$senderName invited you to collaborate on '
+            '${item.projectTitle ?? 'a project'}.';
+      case NotificationType.collaborationResponse:
+        final decision = item.status == 'accepted' ? 'accepted' : 'declined';
+        return '$senderName $decision your request to join '
+            '${item.projectTitle ?? 'a project'}.';
       case NotificationType.task:
         return '$senderName updated a task.';
       case NotificationType.batchCompleted:

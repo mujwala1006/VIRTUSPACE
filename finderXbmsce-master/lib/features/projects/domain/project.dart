@@ -13,8 +13,10 @@ class Project {
     required this.createdAt,
     this.doneTaskCount = 0,
     this.totalTaskCount = 0,
+    List<String> teamUids = const [],
   })  : domains = List.unmodifiable(domains),
-        requiredSkills = List.unmodifiable(requiredSkills) {
+        requiredSkills = List.unmodifiable(requiredSkills),
+        teamUids = List.unmodifiable(teamUids) {
     if (title.trim().isEmpty) throw ArgumentError('title cannot be empty.');
     if (status.trim().isEmpty) throw ArgumentError('status cannot be empty.');
     if (doneTaskCount < 0 ||
@@ -35,6 +37,7 @@ class Project {
   final DateTime createdAt;
   final int doneTaskCount;
   final int totalTaskCount;
+  final List<String> teamUids;
 
   factory Project.fromMap(String id, Map<String, dynamic> map) {
     final createdAt = map['createdAt'];
@@ -54,6 +57,8 @@ class Project {
           createdAt is Timestamp ? createdAt.toDate() : createdAt as DateTime,
       doneTaskCount: map['doneTaskCount'] as int? ?? 0,
       totalTaskCount: map['totalTaskCount'] as int? ?? 0,
+      teamUids:
+          map.containsKey('teamUids') ? _strings(map, 'teamUids') : const [],
     );
   }
 

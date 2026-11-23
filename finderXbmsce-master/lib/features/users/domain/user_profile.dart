@@ -33,6 +33,11 @@ class UserProfile {
     required this.createdAt,
     List<String> domains = const [],
     List<String> certificationUrls = const [],
+    this.collegeName = '',
+    this.preferredRole = '',
+    this.experienceLevel = '',
+    this.availability = '',
+    this.preferredWorkingHours = '',
   })  : skills = List.unmodifiable(skills),
         interests = List.unmodifiable(interests),
         domains = List.unmodifiable(domains),
@@ -53,6 +58,11 @@ class UserProfile {
   final List<String> interests;
   final List<String> domains;
   final List<String> certificationUrls;
+  final String collegeName;
+  final String preferredRole;
+  final String experienceLevel;
+  final String availability;
+  final String preferredWorkingHours;
   final int followersCount;
   final int followingCount;
   final String? resumeUrl;
@@ -74,6 +84,13 @@ class UserProfile {
       domains: _optionalStringList(map['domains'], 'domains'),
       certificationUrls:
           _optionalStringList(map['certificationUrls'], 'certificationUrls'),
+      collegeName: _optionalString(map['collegeName']) ??
+          _requiredString(map, 'department'),
+      preferredRole: _optionalString(map['preferredRole']) ?? '',
+      experienceLevel: _optionalString(map['experienceLevel']) ?? '',
+      availability: _optionalString(map['availability']) ?? '',
+      preferredWorkingHours:
+          _optionalString(map['preferredWorkingHours']) ?? '',
       followersCount: _requiredInt(map, 'followersCount'),
       followingCount: _requiredInt(map, 'followingCount'),
       resumeUrl: map['resumeUrl'] as String?,
@@ -91,6 +108,11 @@ class UserProfile {
         'interests': interests,
         'domains': domains,
         'certificationUrls': certificationUrls,
+        'collegeName': collegeName,
+        'preferredRole': preferredRole,
+        'experienceLevel': experienceLevel,
+        'availability': availability,
+        'preferredWorkingHours': preferredWorkingHours,
         'followersCount': followersCount,
         'followingCount': followingCount,
         'resumeUrl': resumeUrl,
@@ -119,6 +141,12 @@ class UserProfile {
   static List<String> _optionalStringList(Object? value, String key) {
     if (value == null) return const [];
     return _stringList(value, key);
+  }
+
+  static String? _optionalString(Object? value) {
+    if (value == null) return null;
+    if (value is! String) throw const FormatException('Invalid profile field.');
+    return value;
   }
 
   static DateTime _dateTime(Object? value, String key) {

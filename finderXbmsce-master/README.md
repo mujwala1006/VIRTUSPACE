@@ -59,7 +59,8 @@ written through their feature repositories under `lib/features/`.
 
 - `users/{uid}` stores role (`student`, `teacher`, or `innovator`), name, bio,
   photo URL, department, skills, interests, domains, certification URLs,
-  follower counts, resume URL, and creation time. Follower relationships are
+  college, preferred project role, experience level, availability, preferred
+  working hours, follower counts, resume URL, and creation time. Follower relationships are
   under `followers/{followerUid}` and `following/{targetUid}`. Idempotent
   interest requests are under `interests/{targetUid}`; device tokens are under
   `fcmTokens/{token}`.
@@ -67,6 +68,8 @@ written through their feature repositories under `lib/features/`.
   creation time, and read state. A Firestore create trigger sends an FCM push
   to the recipient's registered devices.
 - `posts/{id}` and `projects/{id}` are owned by `authorUid` and `ownerUid`.
+  Projects also store required skills and accepted collaborator UIDs in
+  `teamUids`.
   Post images are stored beneath `posts/{authorUid}/{postId}/`.
 - `batches/{id}` stores a teacher, at least four student UIDs, a project, a
   three-month date range, and status. A student's
@@ -104,11 +107,26 @@ the author's posts in a grid. Firestore composite indexes are included in
 
 ## AI features
 
-Teammate scoring runs in the `suggestTeammates` Cloud Function and maps profile
-skills to frontend, backend, mobile, data/AI, design, and hardware categories.
-Suggestions are scoped to a project the caller owns or an active batch they
-belong to. `inviteTeammate` sends an idempotent project/batch collaboration
-notification; it does not add members directly to an existing batch.
+Smart Team Matching runs in the authenticated `suggestTeammates` Cloud
+Function. It is a deterministic scoring engine, not a machine-learning model.
+It maps project and profile skills to frontend, backend, mobile, data/AI,
+design, and hardware categories; scores required skill coverage (40%), team
+complementarity (25%), shared interests (15%), role fit (10%), and experience
+plus availability (10%); and returns explanations with each score. It excludes
+the signed-in student and existing project/batch members. Suggestions are
+limited to projects the caller owns, belongs to, or can explore while open.
+
+Students can edit matching fields from their profile and filter suggestions by
+skill, college, experience, and current availability. `inviteTeammate` creates
+an authenticated, idempotent record in `collaborationRequests/{requestId}` and
+notifies the invited student. The recipient can accept or reject through
+`respondToCollaborationRequest`; acceptance adds them to the project's
+`teamUids` (and adds a non-owner requester who initiated the collaboration)
+and notifies the requester. It does not silently enroll them in an existing
+faculty batch.
+
+The matching engine has unit tests in `functions/matching.test.js`; run them
+with `npm test` from the `functions/` directory.
 
 The FinderX chatbot uses the `chatbot` callable as a server-side proxy to
 OpenAI. No provider key is bundled in the app. Before deploying Functions,
@@ -121,6 +139,4 @@ firebase deploy --only functions
 
 Chat history is stored under each user's
 `users/{uid}/aiChatMessages/` path and is readable only by that user. The
-callable rate-limits each user to 20 requests per hour. Matching scoring has
-unit tests in `functions/matching.test.js`; run them with `npm test` from the
-`functions/` directory.
+callable rate-limits each user to 20 requests per hour.

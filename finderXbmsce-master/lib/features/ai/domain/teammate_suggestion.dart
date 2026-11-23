@@ -6,6 +6,11 @@ class TeammateSuggestion {
     required this.department,
     required this.photoUrl,
     required this.skills,
+    required this.interests,
+    required this.collegeName,
+    required this.experienceLevel,
+    required this.availability,
+    required this.preferredWorkingHours,
     required this.score,
     required this.reason,
   });
@@ -16,11 +21,17 @@ class TeammateSuggestion {
   final String department;
   final String photoUrl;
   final List<String> skills;
+  final List<String> interests;
+  final String collegeName;
+  final String experienceLevel;
+  final String availability;
+  final String preferredWorkingHours;
   final int score;
   final String reason;
 
   factory TeammateSuggestion.fromMap(Map<String, dynamic> map) {
     final skills = map['skills'];
+    final interests = map['interests'];
     if (map['uid'] is! String ||
         map['name'] is! String ||
         map['role'] is! String ||
@@ -28,6 +39,12 @@ class TeammateSuggestion {
         map['photoUrl'] is! String ||
         skills is! List ||
         skills.any((skill) => skill is! String) ||
+        interests is! List ||
+        interests.any((interest) => interest is! String) ||
+        map['collegeName'] is! String ||
+        map['experienceLevel'] is! String ||
+        map['availability'] is! String ||
+        map['preferredWorkingHours'] is! String ||
         map['score'] is! num ||
         map['reason'] is! String) {
       throw const FormatException('Invalid teammate suggestion.');
@@ -39,6 +56,11 @@ class TeammateSuggestion {
       department: map['department'] as String,
       photoUrl: map['photoUrl'] as String,
       skills: List.unmodifiable(skills.cast<String>()),
+      interests: List.unmodifiable(interests.cast<String>()),
+      collegeName: map['collegeName'] as String,
+      experienceLevel: map['experienceLevel'] as String,
+      availability: map['availability'] as String,
+      preferredWorkingHours: map['preferredWorkingHours'] as String,
       score: (map['score'] as num).round(),
       reason: map['reason'] as String,
     );

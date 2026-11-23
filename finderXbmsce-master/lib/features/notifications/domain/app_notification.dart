@@ -6,7 +6,8 @@ enum NotificationType {
   batchInvite('batch_invite'),
   teammateInvite('teammate_invite'),
   task('task'),
-  batchCompleted('batch_completed');
+  batchCompleted('batch_completed'),
+  collaborationResponse('collaboration_response');
 
   const NotificationType(this.wireValue);
 
@@ -30,6 +31,10 @@ class AppNotification {
     required this.refId,
     required this.createdAt,
     required this.read,
+    this.requestId,
+    this.projectId,
+    this.projectTitle,
+    this.status,
   });
 
   final String id;
@@ -39,6 +44,10 @@ class AppNotification {
   final String? refId;
   final DateTime createdAt;
   final bool read;
+  final String? requestId;
+  final String? projectId;
+  final String? projectTitle;
+  final String? status;
 
   factory AppNotification.fromMap(String id, Map<String, dynamic> map) {
     final createdAt = map['createdAt'];
@@ -55,6 +64,10 @@ class AppNotification {
           createdAt is Timestamp ? createdAt.toDate() : createdAt as DateTime,
       read: map['read'] as bool? ??
           (throw const FormatException('Missing or invalid read.')),
+      requestId: map['requestId'] as String?,
+      projectId: map['projectId'] as String?,
+      projectTitle: map['projectTitle'] as String?,
+      status: map['status'] as String?,
     );
   }
 
@@ -65,6 +78,10 @@ class AppNotification {
         'refId': refId,
         'createdAt': Timestamp.fromDate(createdAt),
         'read': read,
+        if (requestId != null) 'requestId': requestId,
+        if (projectId != null) 'projectId': projectId,
+        if (projectTitle != null) 'projectTitle': projectTitle,
+        if (status != null) 'status': status,
       };
 
   static String _string(Map<String, dynamic> map, String key) {
