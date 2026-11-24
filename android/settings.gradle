@@ -1,4 +1,25 @@
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+
+    plugins {
+        id 'com.android.application' version '7.4.2'
+        id 'org.jetbrains.kotlin.android' version '1.8.22'
+        id 'com.google.gms.google-services' version '4.4.0'
+    }
+}
+
 include ':app'
+
+// Keep Flutter 3.3's plugin build classpaths on a single compatible AGP version.
+gradle.beforeProject { project ->
+    project.buildscript.configurations.classpath.resolutionStrategy.force(
+        'com.android.tools.build:gradle:7.4.2'
+    )
+}
 
 def localPropertiesFile = new File(rootProject.projectDir, "local.properties")
 def properties = new Properties()

@@ -1,4 +1,4 @@
-package com.example.finderr
+package com.virtuspace.app
 
 import io.flutter.embedding.android.FlutterActivity
 

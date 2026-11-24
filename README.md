@@ -21,6 +21,13 @@
 - Dart: Object-oriented programming language used in Flutter development.
 - Firebase: Backend-as-a-Service platform for authentication, real-time database, and push notifications.
 
+## Android build
+
+The Android application ID is `com.virtuspace.app` and its minimum Android SDK
+version is 23. Android builds use JDK 17 (required by Android Gradle Plugin
+7.4.2). Firebase initialization reads the Android client configuration from
+`android/app/google-services.json`.
+
 ## User Interface
 
 <div align="center">
