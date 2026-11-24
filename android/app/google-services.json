@@ -12,12 +12,7 @@
           "package_name": "com.example.finderr"
         }
       },
-      "oauth_client": [
-        {
-          "client_id": "539511023898-tvq68l2eu77kgrdrtch4pf25dmfff1ga.apps.googleusercontent.com",
-          "client_type": 3
-        }
-      ],
+      "oauth_client": [],
       "api_key": [
         {
           "current_key": "AIzaSyB6Lf7v2ap8YrwYx_Qlnlp-v3rup2l8ENo"
@@ -25,12 +20,26 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": [
-            {
-              "client_id": "539511023898-tvq68l2eu77kgrdrtch4pf25dmfff1ga.apps.googleusercontent.com",
-              "client_type": 3
-            }
-          ]
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:539511023898:android:080584fdcbc03c5fd7e4a3",
+        "android_client_info": {
+          "package_name": "com.virtuspace.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB6Lf7v2ap8YrwYx_Qlnlp-v3rup2l8ENo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
         }
       }
     }
