@@ -5,6 +5,10 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function verifiedEmail() {
+      return signedIn() && request.auth.token.email_verified == true;
+    }
+
     function profileOwner(uid) {
       return signedIn() && request.auth.uid == uid;
     }
@@ -87,7 +91,9 @@ service cloud.firestore {
 
     match /users/{uid} {
       allow read: if signedIn();
-      allow create: if profileOwner(uid) && validProfile(request.resource.data);
+      allow create: if profileOwner(uid)
+          && request.resource.data.role in ['student', 'innovator']
+          && validProfile(request.resource.data);
       allow delete: if profileOwner(uid);
       allow update: if validProfile(request.resource.data)
           && (profileOwner(uid) && profileFieldsOnly()
@@ -96,7 +102,7 @@ service cloud.firestore {
 
       match /followers/{followerUid} {
         allow read: if signedIn();
-        allow create: if signedIn()
+        allow create: if verifiedEmail()
             && request.auth.uid == followerUid
             && request.resource.data.uid == followerUid;
         allow delete: if signedIn() && request.auth.uid == followerUid;
@@ -105,7 +111,8 @@ service cloud.firestore {
 
       match /following/{targetUid} {
         allow read: if signedIn();
-        allow create: if profileOwner(uid)
+        allow create: if verifiedEmail()
+            && profileOwner(uid)
             && request.resource.data.uid == targetUid;
         allow delete: if profileOwner(uid);
         allow update: if false;
@@ -113,7 +120,8 @@ service cloud.firestore {
 
       match /interests/{targetUid} {
         allow read: if profileOwner(uid);
-        allow create: if profileOwner(uid)
+        allow create: if verifiedEmail()
+            && profileOwner(uid)
             && request.resource.data.uid == targetUid;
         allow delete: if profileOwner(uid);
         allow update: if false;
@@ -134,16 +142,11 @@ service cloud.firestore {
 
     match /notifications/{notificationId} {
       allow read: if signedIn() && resource.data.toUid == request.auth.uid;
-      allow create: if signedIn()
-          && request.resource.data.fromUid == request.auth.uid
-          && request.resource.data.toUid is string
-          && request.resource.data.type
-              in [
-                'follow', 'interest', 'batch_invite', 'task', 'batch_completed'
-              ]
-          && request.resource.data.read == false;
+      allow create: if false;
       allow update: if signedIn()
           && resource.data.toUid == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['read'])
           && request.resource.data.toUid == resource.data.toUid
           && request.resource.data.fromUid == resource.data.fromUid
           && request.resource.data.type == resource.data.type
@@ -163,7 +166,7 @@ service cloud.firestore {
 
     match /posts/{postId} {
       allow read: if signedIn();
-      allow create: if signedIn()
+      allow create: if verifiedEmail()
           && request.resource.data.authorUid == request.auth.uid
           && request.resource.data.type in ['update', 'certification'];
       allow update: if signedIn()
@@ -174,7 +177,7 @@ service cloud.firestore {
 
     match /projects/{projectId} {
       allow read: if signedIn();
-      allow create: if signedIn()
+      allow create: if verifiedEmail()
           && request.resource.data.ownerUid == request.auth.uid
           && request.resource.data.doneTaskCount == 0
           && request.resource.data.totalTaskCount == 0;
@@ -205,7 +208,8 @@ service cloud.firestore {
 
       match /tasks/{taskId} {
         allow read: if isBatchMember(batchId);
-        allow create: if isBatchMember(batchId)
+        allow create: if verifiedEmail()
+            && isBatchMember(batchId)
             && resource == null
             && request.resource.data.title is string
             && request.resource.data.description is string
@@ -218,7 +222,8 @@ service cloud.firestore {
             && request.resource.data.updatedBy == request.auth.uid
             && request.resource.data.updatedAt == request.time
             && request.resource.data.status in ['todo', 'doing', 'done'];
-        allow update: if isBatchMember(batchId)
+        allow update: if verifiedEmail()
+            && isBatchMember(batchId)
             && request.resource.data.diff(resource.data).affectedKeys()
                 .hasOnly([
                   'title', 'description', 'assigneeUid', 'status',

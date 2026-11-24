@@ -35,7 +35,10 @@ final authStateProvider = StreamProvider<User?>(
 );
 
 final userRepositoryProvider = Provider<UserRepository>(
-  (ref) => UserRepository(ref.watch(firestoreProvider)),
+  (ref) => UserRepository(
+    ref.watch(firestoreProvider),
+    ref.watch(firebaseFunctionsProvider),
+  ),
 );
 final notificationRepositoryProvider = Provider<NotificationRepository>(
   (ref) => NotificationRepository(ref.watch(firestoreProvider)),

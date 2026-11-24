@@ -1,10 +1,12 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import '../domain/user_profile.dart';
 
 class UserRepository {
-  UserRepository(this._firestore);
+  UserRepository(this._firestore, this._functions);
 
   final FirebaseFirestore _firestore;
+  final FirebaseFunctions _functions;
 
   CollectionReference<Map<String, dynamic>> get _users =>
       _firestore.collection('users');
@@ -39,8 +41,26 @@ class UserRepository {
         );
   }
 
-  Future<void> create(UserProfile profile) =>
-      _users.doc(profile.uid).set(profile.toMap());
+  Future<void> create(UserProfile profile) {
+    if (profile.role == UserRole.teacher) {
+      throw StateError(
+        'Teacher profiles must be created with a faculty access code.',
+      );
+    }
+    return _users.doc(profile.uid).set(profile.toMap());
+  }
+
+  Future<void> registerTeacher({
+    required String name,
+    required String department,
+    required String facultyCode,
+  }) async {
+    await _functions.httpsCallable('registerTeacher').call({
+      'name': name,
+      'department': department,
+      'facultyCode': facultyCode,
+    });
+  }
 
   Future<void> updateFields(String uid, Map<String, Object?> fields) =>
       _users.doc(uid).update(fields);
@@ -72,8 +92,6 @@ class UserRepository {
     final target = _users.doc(targetUid);
     final followingEdge = follower.collection('following').doc(targetUid);
     final followerEdge = target.collection('followers').doc(followerUid);
-    final notification = _firestore.collection('notifications').doc();
-
     return _firestore.runTransaction<bool>((transaction) async {
       final followerSnapshot = await transaction.get(follower);
       final targetSnapshot = await transaction.get(target);
@@ -91,14 +109,6 @@ class UserRepository {
       transaction.set(followerEdge, {
         'uid': followerUid,
         'createdAt': FieldValue.serverTimestamp(),
-      });
-      transaction.set(notification, {
-        'toUid': targetUid,
-        'fromUid': followerUid,
-        'type': 'follow',
-        'refId': targetUid,
-        'createdAt': Timestamp.fromDate(DateTime.now()),
-        'read': false,
       });
       transaction.update(follower, {'followingCount': FieldValue.increment(1)});
       transaction.update(target, {'followersCount': FieldValue.increment(1)});

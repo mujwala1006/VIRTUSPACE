@@ -24,9 +24,6 @@ class NotificationRepository {
         );
   }
 
-  Future<void> create(AppNotification notification) =>
-      _notifications.doc(notification.id).set(notification.toMap());
-
   Future<bool> createInterestOnce({
     required String fromUid,
     required String toUid,
@@ -40,25 +37,13 @@ class NotificationRepository {
         .doc(fromUid)
         .collection('interests')
         .doc(toUid);
-    final notificationId = 'interest_${fromUid}_$toUid';
-    final notification = _notifications.doc(notificationId);
-
     return _firestore.runTransaction<bool>((transaction) async {
       final existing = await transaction.get(interestEdge);
       if (existing.exists) return false;
 
-      final createdAt = DateTime.now();
       transaction.set(interestEdge, {
         'uid': toUid,
-        'createdAt': Timestamp.fromDate(createdAt),
-      });
-      transaction.set(notification, {
-        'toUid': toUid,
-        'fromUid': fromUid,
-        'type': NotificationType.interest.wireValue,
-        'refId': fromUid,
-        'createdAt': Timestamp.fromDate(createdAt),
-        'read': false,
+        'createdAt': FieldValue.serverTimestamp(),
       });
       return true;
     });

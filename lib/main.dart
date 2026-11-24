@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'features/app_providers.dart';
 import 'features/authentication/presentation/auth_page.dart';
+import 'features/authentication/presentation/complete_profile_page.dart';
+import 'features/authentication/presentation/email_verification_banner.dart';
 import 'features/notifications/presentation/push_notification_setup.dart';
 import 'features/users/presentation/dashboard_page.dart';
 
@@ -23,6 +25,9 @@ class VirtuSpaceApp extends StatelessWidget {
         debugShowCheckedModeBanner: false,
         navigatorKey: appNavigatorKey,
         scaffoldMessengerKey: appScaffoldMessengerKey,
+        builder: (context, child) => EmailVerificationBanner(
+          child: child ?? const SizedBox.shrink(),
+        ),
         home: const PushNotificationSetup(child: AuthGate()),
       );
 }
@@ -48,10 +53,7 @@ class AuthGate extends ConsumerWidget {
           ),
           data: (profile) {
             if (profile == null) {
-              return const _ErrorPage(
-                message:
-                    'Your account profile is missing. Please contact support.',
-              );
+              return CompleteProfilePage(user: user);
             }
             return DashboardPage(profile: profile);
           },

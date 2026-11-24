@@ -10,9 +10,22 @@ const {defineSecret} = require("firebase-functions/params");
 const {createHash} = require("node:crypto");
 const logger = require("firebase-functions/logger");
 const {rankTeammates, skillCategory} = require("./matching");
+const {
+  batchInviteNotifications,
+  followNotification,
+  interestNotification,
+  taskNotification,
+} = require("./notification_helpers");
+const {
+  hasVerifiedEmail,
+  hasFacultyAccessCode,
+  normalizeTeacherRegistration,
+  teacherProfileFields,
+} = require("./registration_security");
 
 initializeApp();
 const openAiApiKey = defineSecret("OPENAI_API_KEY");
+const facultyInviteCode = defineSecret("FACULTY_INVITE_CODE");
 
 const collaborationRequestId = (projectId, toUid) =>
   createHash("sha256")
@@ -21,6 +34,123 @@ const collaborationRequestId = (projectId, toUid) =>
 
 const stringList = (value) => Array.isArray(value) ?
   value.filter((item) => typeof item === "string") : [];
+
+const requireVerifiedEmail = (request) => {
+  if (!hasVerifiedEmail(request.auth)) {
+    throw new HttpsError(
+        "failed-precondition",
+        "Verify your email before continuing.",
+    );
+  }
+};
+
+const writeNotification = async (db, notification) => {
+  const {id, ...data} = notification;
+  try {
+    await db.collection("notifications").doc(id).create({
+      ...data,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+  } catch (error) {
+    if (error.code === 6 || error.code === "already-exists") return;
+    throw error;
+  }
+};
+
+exports.registerTeacher = onCall(
+    {secrets: [facultyInviteCode]},
+    async (request) => {
+      const uid = request.auth?.uid;
+      if (!uid) {
+        throw new HttpsError(
+            "unauthenticated",
+            "Sign in before completing faculty registration.",
+        );
+      }
+
+      const registration = normalizeTeacherRegistration(request.data);
+      if (!registration) {
+        throw new HttpsError(
+            "invalid-argument",
+            "Enter a valid name, department, and faculty access code.",
+        );
+      }
+
+      const configuredCode = facultyInviteCode.value();
+      if (!configuredCode) {
+        throw new HttpsError(
+            "failed-precondition",
+            "Faculty registration is not configured.",
+        );
+      }
+      if (!hasFacultyAccessCode(
+          registration.facultyCode,
+          configuredCode,
+      )) {
+        throw new HttpsError(
+            "permission-denied",
+            "The faculty access code is invalid.",
+        );
+      }
+
+      const profile = {
+        ...teacherProfileFields(registration),
+        createdAt: FieldValue.serverTimestamp(),
+      };
+      try {
+        await getFirestore().collection("users").doc(uid).create(profile);
+      } catch (error) {
+        if (error.code === 6 || error.code === "already-exists") {
+          throw new HttpsError(
+              "already-exists",
+              "A profile already exists for this account.",
+          );
+        }
+        throw error;
+      }
+      return {uid};
+    },
+);
+
+exports.notifyOnFollowCreated = onDocumentCreated(
+    {document: "users/{uid}/followers/{followerUid}", retry: true},
+    async (event) => {
+      const edge = event.data?.data();
+      const {followerUid, uid: targetUid} = event.params;
+      if (!edge || edge.uid !== followerUid) {
+        logger.error("Follow edge has an invalid follower UID.", {
+          followerUid,
+          targetUid,
+        });
+        return;
+      }
+      await writeNotification(getFirestore(), followNotification({
+        eventId: event.id,
+        followerUid,
+        targetUid,
+      }));
+    },
+);
+
+exports.notifyOnInterestCreated = onDocumentCreated(
+    {document: "users/{uid}/interests/{targetUid}", retry: true},
+    async (event) => {
+      const edge = event.data?.data();
+      const {targetUid, uid: senderUid} = event.params;
+      if (!edge || edge.uid !== targetUid || senderUid === targetUid) {
+        logger.error("Interest edge has invalid participant UIDs.", {
+          senderUid,
+          targetUid,
+        });
+        return;
+      }
+      await writeNotification(getFirestore(), interestNotification({
+        eventId: event.id,
+        senderUid,
+        targetUid,
+      }));
+    },
+);
 
 exports.suggestTeammates = onCall({timeoutSeconds: 60}, async (request) => {
   const uid = request.auth?.uid;
@@ -208,6 +338,7 @@ exports.inviteTeammate = onCall(async (request) => {
   if (!fromUid) {
     throw new HttpsError("unauthenticated", "Sign in to send an invitation.");
   }
+  requireVerifiedEmail(request);
   if (typeof toUid !== "string" || toUid.trim().length === 0 ||
       toUid.length > 128 || toUid.includes("/") ||
       typeof projectId !== "string" || projectId.trim().length === 0 ||
@@ -536,6 +667,7 @@ exports.createBatch = onCall(async (request) => {
   if (!teacherUid) {
     throw new HttpsError("unauthenticated", "Sign in to create a batch.");
   }
+  requireVerifiedEmail(request);
 
   const {batchId, projectId, studentUids} = request.data || {};
   if (typeof batchId !== "string" || batchId.length === 0 ||
@@ -653,6 +785,17 @@ exports.createBatch = onCall(async (request) => {
         teacherUid,
         endsAt: endDate,
       });
+    }
+    for (const notification of batchInviteNotifications({
+      batchId,
+      teacherUid,
+      studentUids,
+    })) {
+      const {id, ...data} = notification;
+      transaction.create(
+          db.collection("notifications").doc(id),
+          {...data, createdAt: FieldValue.serverTimestamp()},
+      );
     }
   });
 
@@ -920,5 +1063,23 @@ exports.updateProjectTaskProgress = onDocumentWritten(
         doneTaskCount,
         totalTaskCount,
       });
+    },
+);
+
+exports.notifyTaskAssignee = onDocumentWritten(
+    {document: "batches/{batchId}/tasks/{taskId}", retry: true},
+    async (event) => {
+      const before = event.data?.before.exists ?
+        event.data.before.data() : null;
+      const after = event.data?.after.exists ?
+        event.data.after.data() : null;
+      const notification = taskNotification({
+        eventId: event.id,
+        taskId: event.params.taskId,
+        before,
+        after,
+      });
+      if (!notification) return;
+      await writeNotification(getFirestore(), notification);
     },
 );

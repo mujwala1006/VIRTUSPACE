@@ -24,6 +24,8 @@ class _AuthPageState extends ConsumerState<AuthPage> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _nameController = TextEditingController();
+  final _departmentController = TextEditingController();
+  final _facultyCodeController = TextEditingController();
   late bool _isCreatingAccount;
   bool _isLoading = false;
 
@@ -38,6 +40,8 @@ class _AuthPageState extends ConsumerState<AuthPage> {
     _emailController.dispose();
     _passwordController.dispose();
     _nameController.dispose();
+    _departmentController.dispose();
+    _facultyCodeController.dispose();
     super.dispose();
   }
 
@@ -50,6 +54,7 @@ class _AuthPageState extends ConsumerState<AuthPage> {
       return;
     }
 
+    final messenger = ScaffoldMessenger.of(context);
     setState(() => _isLoading = true);
     String? errorMessage;
     try {
@@ -60,23 +65,44 @@ class _AuthPageState extends ConsumerState<AuthPage> {
           password: _passwordController.text,
         );
         final uid = credential.user!.uid;
-        final now = DateTime.now();
-        await ref.read(userRepositoryProvider).create(
-              UserProfile(
-                uid: uid,
-                role: widget.role!,
-                name: _nameController.text.trim(),
-                bio: '',
-                photoUrl: '',
-                department: '',
-                skills: const [],
-                interests: const [],
-                followersCount: 0,
-                followingCount: 0,
-                resumeUrl: null,
-                createdAt: now,
-              ),
+        final repository = ref.read(userRepositoryProvider);
+        if (widget.role == UserRole.teacher) {
+          try {
+            await repository.registerTeacher(
+              name: _nameController.text.trim(),
+              department: _departmentController.text.trim(),
+              facultyCode: _facultyCodeController.text.trim(),
             );
+          } catch (error) {
+            try {
+              await credential.user!.delete();
+            } catch (deleteError) {
+              throw StateError(
+                'Teacher registration failed: $error. '
+                'The new account could not be removed: $deleteError',
+              );
+            }
+            rethrow;
+          }
+        } else {
+          await repository.create(
+            UserProfile(
+              uid: uid,
+              role: widget.role!,
+              name: _nameController.text.trim(),
+              bio: '',
+              photoUrl: '',
+              department: '',
+              skills: const [],
+              interests: const [],
+              followersCount: 0,
+              followingCount: 0,
+              resumeUrl: null,
+              createdAt: DateTime.now(),
+            ),
+          );
+        }
+        await credential.user!.sendEmailVerification();
       } else {
         await auth.signInWithEmailAndPassword(
           email: _emailController.text.trim(),
@@ -93,8 +119,8 @@ class _AuthPageState extends ConsumerState<AuthPage> {
       if (mounted) setState(() => _isLoading = false);
     }
 
-    if (errorMessage != null && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
+    if (errorMessage != null) {
+      messenger.showSnackBar(
         SnackBar(content: Text(errorMessage)),
       );
     }
@@ -133,6 +159,30 @@ class _AuthPageState extends ConsumerState<AuthPage> {
                               : null,
                     ),
                     const SizedBox(height: 12),
+                    if (widget.role == UserRole.teacher) ...[
+                      TextFormField(
+                        controller: _departmentController,
+                        decoration:
+                            const InputDecoration(labelText: 'Department'),
+                        validator: (value) =>
+                            value == null || value.trim().isEmpty
+                                ? 'Enter your department.'
+                                : null,
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: _facultyCodeController,
+                        obscureText: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Faculty access code',
+                        ),
+                        validator: (value) =>
+                            value == null || value.trim().isEmpty
+                                ? 'Enter the faculty access code.'
+                                : null,
+                      ),
+                      const SizedBox(height: 12),
+                    ],
                   ],
                   TextFormField(
                     controller: _emailController,

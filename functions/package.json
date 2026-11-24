@@ -7,8 +7,8 @@
   },
   "main": "index.js",
   "scripts": {
-    "lint": "node --check index.js && node --check matching.js",
-    "test": "node --test matching.test.js"
+    "lint": "node --check index.js && node --check matching.js && node --check registration_security.js && node --check notification_helpers.js && node --check security.test.js",
+    "test": "node --test"
   },
   "dependencies": {
     "firebase-admin": "^14.5.0",

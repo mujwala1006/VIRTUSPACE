@@ -95,6 +95,29 @@ Deploy `firestore.rules` with the Firebase CLI when deploying the app. Existing
 documents in the previous `students` and `teachers` collections are not migrated
 automatically; backfill them into `users/{uid}` with this schema before rollout.
 
+## Account and notification security
+
+Client-created profiles may only use the `student` or `innovator` role. Teacher
+profiles are created by the authenticated `registerTeacher` callable after it
+checks the `FACULTY_INVITE_CODE` Firebase secret. Configure that secret before
+deploying Functions:
+
+```shell
+firebase functions:secrets:set FACULTY_INVITE_CODE
+```
+
+Sign-up sends an email verification link. Unverified users can browse, but
+Firestore rules and the batch/request callables reject creating posts, projects,
+batches, follows, interests, and collaboration requests until the email is
+verified. The app banner can resend the link and refresh the verification
+status.
+
+Clients cannot create `/notifications` documents. Follow and interest events
+create notifications through Firestore triggers; batch invitations are created
+by `createBatch`, and task notifications by a Firestore trigger. The existing
+notification-created trigger continues to deliver FCM pushes. Notification
+security and registration helper tests run with `npm test` in `functions/`.
+
 Resumes and certification documents are uploaded beneath
 `profiles/{uid}/resume/` and `profiles/{uid}/certifications/` in Firebase
 Storage. Resumes are PDF-only; certifications accept PDF, PNG, or JPEG files.
